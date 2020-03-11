@@ -1,7 +1,5 @@
-version: '3'
-
+version: "3.0"
 services:
-
   mysql:
    image: mysql
    environment:
@@ -9,3 +7,9 @@ services:
      MYSQL_DATABASE: DB
    volumes:
     - ./database:/var/lib/mysql
+  web:
+    build: frontend/
+    ports:
+     - 5000:80
+    volumes:
+     - ./frontend/html:/var/www/html/
