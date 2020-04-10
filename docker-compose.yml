@@ -1,3 +1,4 @@
+  
 version: "3.0"
 services:
   mysql:
@@ -12,4 +13,6 @@ services:
     ports:
      - 5000:80
     volumes:
-     - ./frontend/html:/var/www/html/
+     ##- ./frontend/html:/var/www/html/
+     - "./front_end:/app"
+     
