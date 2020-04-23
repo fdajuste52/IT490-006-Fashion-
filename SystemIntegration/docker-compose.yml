@@ -1,0 +1,99 @@
+version: "2.1" # for version 3+ depends_on.condition is not supported
+
+# This section describes the various containers (services).
+services:
+  rabbit:
+    # There is a prebuilt RabbitMQ image; see
+    # https://hub.docker.com/_/rabbitmq/ for details.
+    # This variant is built on Alpine Linux (it's smaller) and includes
+    # the management UI.
+    image: "rabbitmq:3.6-management-alpine"
+
+    healthcheck:
+      test: "echo 'GET / HTTP/1.0' | nc localhost 5672 | grep -q AMQP"
+      interval: 30s
+      retries: 5
+
+    # These ports are exposed on the host; 'hostport:containerport'.
+    # You could connect to this server from outside with the *host's*
+    # DNS name or IP address and port 5672 (the left-hand side of the
+    # colon).
+    ports:
+      # The standard AMQP protocol port
+      - "5672:5672"
+      # HTTP management UI
+      - "15672:15672"
+
+    # Run this container on a private network for this application.
+    # This is necessary for magic Docker DNS to work: other containers
+    # also running on this network will see a host name "rabbitmq"
+    # (the name of this section) and the internal port 5672, even though
+    # that's not explicitly published above.
+    # networks:
+    #   - network
+
+  consumer:
+    image: "python:3-alpine"
+    depends_on:
+      rabbit:
+        condition: service_healthy
+    links: 
+      - rabbit
+    environment:
+      AMQP_URL: ${AMQP_URL}
+      PYTHONPATH: ${DEFAULT_WORKDIR}
+    working_dir: ${DEFAULT_WORKDIR}
+    volumes:
+      - ${PWD}/python:${DEFAULT_WORKDIR}
+    # networks:
+    #   - network
+    command: "sh -c 'pip install pika==0.13.1; python -u consumer_1.py'"
+
+  publisher:
+    # Identical to the consumer.
+    # build: publisher
+    image: "python:3-alpine"
+    depends_on:
+      rabbit:
+        condition: service_healthy
+    links: 
+      - rabbit
+    environment:
+      AMQP_URL: ${AMQP_URL}
+      PYTHONPATH: ${DEFAULT_WORKDIR}
+    working_dir: ${DEFAULT_WORKDIR}
+    volumes:
+      - ${PWD}/python:${DEFAULT_WORKDIR}
+    # networks:
+    #   - network
+    command: "sh -c 'pip install pika==0.13.1; python -u publisher.py'"
+  
+  postgres:
+    image: "postgres:alpine"
+    # restart: always
+    environment:
+      POSTGRES_PASSWORD: example
+
+  backend:  
+    image: "node:12"
+    depends_on:
+      rabbit:
+        condition: service_healthy
+    links: 
+      - rabbit
+    environment:
+      AMQP_URL: "amqp://rabbit?connection_attempts=5&retry_delay=5"
+    working_dir: ${DEFAULT_WORKDIR}
+    volumes:
+      - ${PWD}/backend:${DEFAULT_WORKDIR}
+    command: "npm start"
+
+  frontend:
+    image: "node:12"
+    working_dir: ${DEFAULT_WORKDIR}
+    volumes:
+      - ${PWD}/frontend:${DEFAULT_WORKDIR}
+    ports:
+      # required 5000 port
+      - "5000:5000"
+    command: "npm start"

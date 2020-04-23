@@ -1,0 +1,14 @@
+{
+  "name": "backend",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "([ -d ./node_modules ] || npm i ) && node index.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "amqplib": "^0.5.5"
+  }
+}
