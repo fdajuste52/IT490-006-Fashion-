@@ -1,0 +1,219 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rabbit-role
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rabbit-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: rabbit-service-account
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: rabbit-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rabbit-service-account
+  namespace: default
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbit-config
+data:
+  rabbitmq.conf: |-
+    cluster_formation.peer_discovery_backend  = rabbit_peer_discovery_k8s
+    cluster_formation.k8s.host = kubernetes.default.svc.cluster.local
+    cluster_formation.k8s.address_type = hostname
+    cluster_formation.k8s.hostname_suffix = .rabbit-discovery-service.default.svc.cluster.local
+    cluster_formation.k8s.service_name = rabbit-discovery-service
+    cluster_formation.node_cleanup.interval = 10
+    cluster_formation.node_cleanup.only_log_warning = true
+    cluster_partition_handling = autoheal
+    queue_master_locator=min-masters
+  enabled_plugins: |-
+    [rabbitmq_management,rabbitmq_peer_discovery_k8s].
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbit-service
+spec:
+  selector:
+    configid: rabbit-container
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 5672
+      name: amqp
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbit-discovery-service
+spec:
+  selector:
+    configid: rabbit-container
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+      - port: 5672
+        name: amqp
+        targetPort: 5672
+      - port: 15672
+        name: http
+        targetPort: 15672
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbit-statefulset
+spec:
+  serviceName: rabbit-discovery-service
+  replicas: 3
+  selector:
+    matchLabels:
+      configid: rabbit-container
+  template:
+    metadata:
+      labels:
+        configid: rabbit-container        
+    spec:
+      serviceAccountName: rabbit-service-account
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: rabbit
+          image: cokhions/rabbitmq:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RABBITMQ_USE_LONGNAME
+              value: "true"
+            - name: RABBITMQ_NODENAME
+              value: "rabbit@$(HOSTNAME).rabbit-discovery-service.default.svc.cluster.local"
+          volumeMounts:
+            - name: rabbit-config
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
+            - name: rabbit-config
+              mountPath: /etc/rabbitmq/rabbitmq.conf
+              subPath: rabbitmq.conf
+          livenessProbe:
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - /probe.sh
+          readinessProbe:
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 1
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - /probe.sh
+      volumes:
+        - name: rabbit-config
+          configMap:
+            name: rabbit-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer
+spec:
+  ports:
+     -  port: 5353
+        targetPort: 5353
+  selector:
+    app: consumer
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer
+spec:
+  selector:
+    matchLabels:
+      app: consumer
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  minReadySeconds: 5
+  template:
+    metadata:
+     labels:
+        app: consumer
+    spec:
+      containers:
+      - name: consumer
+        image: cokhions/python-rabbit-consumer:latest
+        ports:
+        - containerPort: 5353
+        imagePullPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: publisher
+spec:
+  ports:
+     -  port: 5454
+        targetPort: 5454
+  selector:
+    app: publisher
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: publisher
+spec:
+  selector:
+    matchLabels:
+      app: publisher
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  minReadySeconds: 5
+  template:
+    metadata:
+     labels:
+        app: publisher
+    spec:
+      containers:
+      - name: publisher
+        image: cokhions/python-rabbit-publisher:latest
+        ports:
+        - containerPort: 5454
+        imagePullPolicy: Always
